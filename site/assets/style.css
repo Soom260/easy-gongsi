@@ -102,7 +102,6 @@ button {
   cursor: pointer;
 }
 .hint { color: var(--muted); font-size: 0.9rem; margin: 6px 0 0; }
-.field-error { color: #b42318; font-weight: 600; margin: 6px 0 0; }
 
 .status { min-height: 1.6em; margin: 12px 0 0; color: var(--muted); font-size: 0.9rem; }
 
@@ -187,3 +186,84 @@ summary { cursor: pointer; color: var(--accent); font-weight: 600; }
 }
 .footer-list { margin: 0; padding-left: 1.2em; }
 .disclaimer { margin: 12px 0 0; font-weight: 600; }
+
+/* ---------- 4단계: 상태 화면 ---------- */
+
+/* 재현 모드 안내 띠 */
+.sim-banner {
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  border: 2px dashed #9a6700;
+  border-radius: 8px;
+  background: #fff8c5;
+  color: #4d3800;
+  font-size: 0.9rem;
+}
+
+/* 잘못된 입력: 검색 칸 테두리 + 아래 안내 (색과 글자 함께) */
+.search input[aria-invalid="true"] { border: 2px solid #b42318; }
+.field-error {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  border-left: 4px solid #b42318;
+  background: #fef3f2;
+  color: #7a271a;
+  font-weight: 400;
+}
+.field-error strong { display: block; }
+.field-error strong::before { content: "⚠ "; }
+.field-error span { display: block; font-size: 0.92rem; }
+
+/* 무슨 일 / 왜 / 할 일 상자 */
+.problem {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--muted);
+  border-radius: 12px;
+  padding: 16px;
+}
+.problem h1 { font-size: 1.25rem; margin-top: 0; }
+.problem-error { border-left-color: #b42318; }
+.problem-error h1::before { content: "⚠ "; }
+.problem-lines {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 8px 0 0;
+}
+.problem-lines dt { font-weight: 700; color: var(--muted); }
+.problem-lines dd { margin: 0; }
+.problem-actions { margin-top: 12px; }
+.problem-actions p { margin: 8px 0 0; }
+
+.example-list { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.btn-secondary {
+  display: inline-block;
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  font-weight: 600;
+  text-decoration: none;
+}
+.empty p { margin: 4px 0; }
+
+/* 불러오는 중: 회색 자리 */
+.skeleton { display: grid; gap: 12px; }
+.sk { background: #e3e6ea; border-radius: 6px; height: 14px; }
+.sk-title { height: 28px; width: 55%; }
+.sk-line { width: 100%; }
+.sk-line.short { width: 35%; }
+.sk-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+/* 움직임을 줄여 달라고 설정한 사람에게는 반짝임을 보여 주지 않는다 */
+@media (prefers-reduced-motion: no-preference) {
+  .sk { animation: sk-pulse 1.2s ease-in-out infinite; }
+  @keyframes sk-pulse { 50% { opacity: 0.45; } }
+}

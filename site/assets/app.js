@@ -4,13 +4,30 @@
 //   (없음)            → 처음 화면
 //   ?q=삼성           → 검색 결과
 //   ?company=005930   → 회사 화면
+// 시험용 재현 조건 (검증 기록의 근거로 같은 상황을 다시 열 때 사용)
+//   &sim=slow   → 3초 동안 불러오는 중 화면을 보여 준 뒤 정상 화면
+//   &sim=error  → 불러오기 오류 화면 ('다시 시도'를 누르면 정상 화면)
+//   &sim=empty  → 검색 결과 없음 / 최근 공시 없음
 const DATA_DIR = "data/";
 const SITE_NAME = "쉬운 기업 들여다보기";
 const DART_SEARCH = "https://dart.fss.or.kr/dsab007/main.do?option=corp&textCrpNm=";
+const FETCH_TIMEOUT_MS = 10000;
+const SLOW_MS = 3000;
+const SIM_MODES = {
+  slow: "일부러 3초 늦게 불러오는 시험 화면이에요.",
+  error: "불러오기 오류를 일부러 만든 시험 화면이에요. 실제 데이터에는 문제가 없어요.",
+  empty: "결과가 없는 상황을 일부러 만든 시험 화면이에요.",
+};
 
 const view = document.getElementById("view");
 const statusLine = document.getElementById("status");
+const form = document.getElementById("search-form");
 const input = document.getElementById("q");
+const fieldError = document.getElementById("q-error");
+const simBanner = document.getElementById("sim-banner");
+
+let sim = null;          // 지금 주소의 재현 조건
+let simErrorOn = false;  // sim=error 일 때 첫 시도만 실패시키기 위한 표시
 
 // ---------- 작은 도우미 ----------
 
@@ -20,6 +37,7 @@ function el(tag, attrs, ...children) {
   for (const [key, value] of Object.entries(attrs || {})) {
     if (value === null || value === undefined || value === false) continue;
     if (key === "class") node.className = value;
+    else if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
     else node.setAttribute(key, value === true ? "" : value);
   }
   for (const child of children.flat()) {
@@ -34,14 +52,28 @@ function externalLink(href, text) {
   return el("a", { href, target: "_blank", rel: "noopener" }, text, el("span", { class: "sr-only" }, " (새 창)"));
 }
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// 데이터 파일을 읽는다. 10초 안에 답이 없으면 오류로 본다
 async function getJSON(path) {
-  const res = await fetch(DATA_DIR + path, { cache: "no-store" });
-  if (!res.ok) {
-    const err = new Error(`HTTP ${res.status}`);
-    err.status = res.status;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(DATA_DIR + path, { cache: "no-store", signal: controller.signal });
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    return await res.json();
+  } catch (err) {
+    if (err.name === "AbortError") err.timeout = true;
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  return res.json();
 }
 
 function setStatus(text) {
@@ -50,11 +82,12 @@ function setStatus(text) {
 
 // 화면 내용을 바꾸고 탭 제목도 바꾼다
 function render(title, ...nodes) {
-  view.replaceChildren(...nodes);
+  view.removeAttribute("aria-busy");
+  view.replaceChildren(...nodes.flat()); // 회사 목록처럼 여러 요소를 묶어 넘겨도 펼쳐서 넣음
   document.title = title ? `${title} · ${SITE_NAME}` : SITE_NAME;
 }
 
-// 회사 화면을 열면 초점을 회사 이름으로 옮겨서 화면 읽기 프로그램이 바로 읽게 한다
+// 초점을 새 화면의 제목으로 옮겨서 화면 읽기 프로그램이 바로 읽게 한다
 function focusHeading() {
   const h = view.querySelector("h1");
   if (h) {
@@ -74,6 +107,102 @@ function formatKst(iso) {
 function normalize(text) {
   return (text || "").replace(/\s+/g, "").toLowerCase();
 }
+
+// '무슨 일 / 왜 / 할 일' 상자. 오류·빈 결과·잘못된 입력에 함께 쓴다
+function problemBox({ what, why, todo, kind = "info", actions = [] }) {
+  return el(
+    "div",
+    { class: `problem problem-${kind}`, role: kind === "error" ? "alert" : null },
+    el("h1", {}, what),
+    el(
+      "dl",
+      { class: "problem-lines" },
+      el("dt", {}, "왜"), el("dd", {}, why),
+      el("dt", {}, "할 일"), el("dd", {}, todo)
+    ),
+    actions.length ? el("div", { class: "problem-actions" }, actions) : null
+  );
+}
+
+// ---------- 입력 검증 ----------
+
+// 검색어를 검사한다. 통과하면 { ok: true, value }, 아니면 무슨 일/왜/할 일을 돌려준다
+function validateQuery(raw) {
+  const value = (raw || "").trim();
+  if (!value) {
+    return {
+      ok: false,
+      value,
+      what: "검색어가 비어 있어요",
+      why: raw ? "공백만으로는 회사를 찾을 수 없어요." : "아무것도 입력하지 않았어요.",
+      todo: "회사 이름이나 종목코드를 입력해 주세요. 예: 삼성전자, 005930",
+    };
+  }
+  if (/^\d+$/.test(value)) {
+    if (value.length !== 6) {
+      return {
+        ok: false,
+        value,
+        what: "종목코드는 6자리 숫자예요",
+        why: `숫자만 입력하면 종목코드로 찾는데, 입력한 숫자는 ${value.length}자리예요.`,
+        todo: "앞자리 0까지 6자리를 모두 입력해 주세요. 예: 005930",
+      };
+    }
+    return { ok: true, value };
+  }
+  if (value.length < 2) {
+    return {
+      ok: false,
+      value,
+      what: "검색어가 너무 짧아요",
+      why: "검색어는 2자 이상이어야 해요.",
+      todo: "회사 이름을 두 글자 이상 입력해 주세요. 예: 삼성",
+    };
+  }
+  if (value.length > 20) {
+    return {
+      ok: false,
+      value,
+      what: "검색어가 너무 길어요",
+      why: `검색어는 20자까지 받을 수 있는데, ${value.length}자를 입력했어요.`,
+      todo: "회사 이름만 짧게 입력해 주세요. 예: 현대차",
+    };
+  }
+  return { ok: true, value };
+}
+
+// 검색 칸 바로 아래에 안내를 보여 주고, 입력값은 그대로 둔 채 초점을 검색 칸으로 옮긴다
+function showFieldError(result) {
+  fieldError.replaceChildren(
+    el("strong", {}, result.what),
+    el("span", {}, result.why),
+    el("span", {}, result.todo)
+  );
+  fieldError.hidden = false;
+  input.setAttribute("aria-invalid", "true");
+  input.focus();
+}
+
+function clearFieldError() {
+  fieldError.hidden = true;
+  fieldError.replaceChildren();
+  input.removeAttribute("aria-invalid");
+}
+
+form.addEventListener("submit", (event) => {
+  const result = validateQuery(input.value);
+  if (!result.ok) {
+    event.preventDefault();
+    showFieldError(result);
+    setStatus(`입력을 확인해 주세요: ${result.what}`);
+    return;
+  }
+  input.value = result.value; // 앞뒤 공백을 정리해서 보냄
+});
+
+input.addEventListener("input", () => {
+  if (!fieldError.hidden) clearFieldError();
+});
 
 // ---------- 데이터 ----------
 
@@ -95,43 +224,83 @@ function searchCompanies(list, query) {
   });
 }
 
+// 빈 결과 화면에 보여 줄 예시 검색어 (다루는 회사 중에서 고름)
+function exampleQueries(list) {
+  const names = list.slice(0, 3).map((c) => c.name);
+  return list.length ? [...names, list[0].stock_code] : [];
+}
+
+// ---------- 화면: 불러오는 중 ----------
+
+function showLoading(message) {
+  setStatus(message);
+  view.setAttribute("aria-busy", "true");
+  const bar = (cls) => el("div", { class: `sk ${cls}` });
+  view.replaceChildren(
+    el(
+      "div",
+      { class: "skeleton", "aria-hidden": "true" },
+      bar("sk-title"),
+      bar("sk-line"),
+      [1, 2, 3].map(() => el("div", { class: "sk-card" }, bar("sk-line short"), bar("sk-line"), bar("sk-line")))
+    )
+  );
+}
+
 // ---------- 화면: 처음 ----------
 
 async function showHome() {
-  setStatus("회사 목록을 불러오는 중이에요…");
   const list = await loadCompanies();
   setStatus("");
   render(
     null,
     el("h1", {}, "회사 찾기"),
     el("p", {}, "회사 이름이나 종목코드로 찾으면, 그 회사의 최근 공시를 쉬운 말로 풀어 보여 드려요."),
+    companyChips(list)
+  );
+}
+
+function companyChips(list) {
+  return [
     el("h2", {}, `다루는 회사 ${list.length}곳`),
     el(
       "ul",
       { class: "chip-list" },
       list.map((c) => el("li", {}, el("a", { class: "chip", href: `?company=${c.stock_code}` }, c.name)))
-    )
-  );
+    ),
+  ];
 }
 
 // ---------- 화면: 검색 결과 ----------
 
 async function showSearch(query) {
-  input.value = query;
-  setStatus("회사 목록을 불러오는 중이에요…");
   const list = await loadCompanies();
-  const results = searchCompanies(list, query);
-  setStatus(results.length ? `'${query}' 검색 결과 ${results.length}곳` : `'${query}'에 맞는 회사가 없어요`);
+  const results = sim === "empty" ? [] : searchCompanies(list, query);
 
   if (!results.length) {
+    setStatus(`'${query}'에 맞는 회사가 없어요`);
     render(
       `'${query}' 검색`,
-      el("h1", {}, "찾는 회사가 없어요"),
-      el("p", {}, `'${query}'에 맞는 회사가 아직 목록에 없어요. 지금은 코스피 시가총액 상위 회사 ${list.length}곳만 다뤄요.`)
+      problemBox({
+        what: `'${query}'에 맞는 회사가 없어요`,
+        why: `지금은 코스피 시가총액 상위 회사 ${list.length}곳만 다뤄요. 회사 이름이 조금 다르게 적혀 있을 수도 있어요.`,
+        todo: "아래 예시를 눌러 보거나, 다루는 회사 전체 목록에서 골라 보세요.",
+        actions: [
+          el(
+            "ul",
+            { class: "example-list", "aria-label": "예시 검색어" },
+            exampleQueries(list).map((ex) =>
+              el("li", {}, el("a", { class: "btn-secondary", href: `?q=${encodeURIComponent(ex)}` }, ex))
+            )
+          ),
+          el("p", {}, el("a", { href: "./" }, "다루는 회사 전체 보기")),
+        ],
+      })
     );
     return;
   }
 
+  setStatus(`'${query}' 검색 결과 ${results.length}곳`);
   render(
     `'${query}' 검색`,
     el("h1", {}, `'${query}' 검색 결과 ${results.length}곳`),
@@ -214,31 +383,48 @@ function disclosureGroup(group) {
       el(
         "ul",
         { class: "sub-list" },
-        group.list.map((d) => el("li", {}, el("span", { class: "sub-date" }, d.date), " ", externalLink(d.url, d.title)))
+        // 링크 글자에 날짜를 넣어서 같은 제목이 여러 번 나와도 구분되게 한다
+        group.list.map((d) => el("li", {}, externalLink(d.url, `${d.date} ${d.title}`)))
       )
     )
   );
 }
 
-async function showCompany(code, backQuery) {
-  if (backQuery) input.value = backQuery;
-  setStatus("회사 정보를 불러오는 중이에요…");
+function invalidCompany(code) {
+  setStatus("종목코드를 확인해 주세요");
+  render(
+    "잘못된 종목코드",
+    problemBox({
+      what: "종목코드는 6자리 숫자예요",
+      why: `주소에 적힌 '${code}'는 6자리 숫자가 아니에요.`,
+      todo: "위 검색 칸에서 회사 이름이나 6자리 종목코드로 찾아 주세요. 예: 005930",
+      actions: [el("p", {}, el("a", { href: "./" }, "다루는 회사 전체 보기"))],
+    })
+  );
+  focusHeading();
+}
 
+async function showCompany(code, backQuery) {
   const list = await loadCompanies();
   const summary = list.find((c) => c.stock_code === code);
   if (!summary) {
-    setStatus("다루지 않는 회사예요");
+    setStatus("아직 다루지 않는 회사예요");
     render(
       "다루지 않는 회사",
-      el("h1", {}, "아직 다루지 않는 회사예요"),
-      el("p", {}, `종목코드 ${code}는 지금 목록에 없어요. 위 검색 칸에서 다른 회사를 찾아보세요.`)
+      problemBox({
+        what: "아직 다루지 않는 회사예요",
+        why: `종목코드 ${code}는 지금 목록에 없어요. 지금은 코스피 시가총액 상위 회사 ${list.length}곳만 다뤄요.`,
+        todo: "아래 목록에서 다른 회사를 골라 보세요.",
+      }),
+      companyChips(list)
     );
+    focusHeading();
     return;
   }
 
   const company = await getJSON(`company/${code}.json`);
   const disc = company.disclosures;
-  const groups = groupDisclosures(disc.items);
+  const items = sim === "empty" ? [] : disc.items;
   setStatus(`${company.name} 정보를 불러왔어요`);
 
   const back = backQuery
@@ -253,8 +439,17 @@ async function showCompany(code, backQuery) {
   );
 
   let body;
-  if (!disc.items.length) {
-    body = [el("p", { class: "empty" }, `${disc.from} ~ ${disc.to} 동안 올라온 공시가 없어요.`), dartAll];
+  if (!items.length) {
+    body = [
+      el(
+        "div",
+        { class: "empty" },
+        el("p", {}, el("strong", {}, `${disc.from} ~ ${disc.to} 동안 올라온 공시가 없어요.`)),
+        el("p", {}, "왜: 이 기간에 회사가 공시를 내지 않았을 수 있어요."),
+        el("p", {}, "할 일: 더 오래된 공시는 아래 DART 링크에서 찾아볼 수 있어요.")
+      ),
+      dartAll,
+    ];
   } else {
     body = [
       el(
@@ -262,10 +457,10 @@ async function showCompany(code, backQuery) {
         { class: "hint" },
         `${disc.from} ~ ${disc.to} · `,
         disc.truncated
-          ? `전체 ${disc.total_count}건 중 최신 ${disc.items.length}건을 보여 줘요. 같은 제목의 공시는 한 줄로 묶었어요.`
-          : `${disc.items.length}건 · 같은 제목의 공시는 한 줄로 묶었어요.`
+          ? `전체 ${disc.total_count}건 중 최신 ${items.length}건을 보여 줘요. 같은 제목의 공시는 한 줄로 묶었어요.`
+          : `${items.length}건 · 같은 제목의 공시는 한 줄로 묶었어요.`
       ),
-      el("ul", { class: "disclosure-list" }, groups.map(disclosureGroup)),
+      el("ul", { class: "disclosure-list" }, groupDisclosures(items).map(disclosureGroup)),
       dartAll,
     ];
   }
@@ -280,16 +475,100 @@ async function showCompany(code, backQuery) {
   focusHeading();
 }
 
-// ---------- 오류 (4단계에서 '무슨 일 / 왜 / 할 일'과 다시 시도 버튼으로 다듬음) ----------
+// ---------- 화면: 오류 ----------
+
+function describeError(err) {
+  if (err.simulated) {
+    return {
+      what: "정보를 불러오지 못했어요",
+      why: "(재현) 서버가 응답하지 않는 상황을 일부러 만들었어요. 실제 데이터에는 문제가 없어요.",
+      todo: "'다시 시도'를 누르면 정상 화면을 불러와요.",
+    };
+  }
+  if (err.timeout) {
+    return {
+      what: "정보를 불러오는 데 너무 오래 걸려요",
+      why: `${FETCH_TIMEOUT_MS / 1000}초 동안 답이 오지 않았어요. 인터넷 연결이 느리거나 끊겼을 수 있어요.`,
+      todo: "연결을 확인하고 '다시 시도'를 눌러 주세요.",
+    };
+  }
+  if (err.status === 404) {
+    return {
+      what: "정보 파일을 찾지 못했어요",
+      why: "사이트를 새로 만드는 중이라 파일이 잠시 없을 수 있어요.",
+      todo: "잠시 뒤 '다시 시도'를 눌러 주세요. 계속되면 처음 화면에서 다시 찾아 주세요.",
+    };
+  }
+  if (err.status) {
+    return {
+      what: "정보를 불러오지 못했어요",
+      why: `서버가 오류(HTTP ${err.status})로 답했어요.`,
+      todo: "잠시 뒤 '다시 시도'를 눌러 주세요.",
+    };
+  }
+  if (err instanceof SyntaxError) {
+    return {
+      what: "정보 파일을 읽을 수 없어요",
+      why: "파일 내용이 깨져 있어요. 사이트를 새로 만드는 도중일 수 있어요.",
+      todo: "잠시 뒤 '다시 시도'를 눌러 주세요.",
+    };
+  }
+  return {
+    what: "정보를 불러오지 못했어요",
+    why: "인터넷 연결이 끊겼거나 서버가 잠시 응답하지 않아요.",
+    todo: "연결을 확인하고 '다시 시도'를 눌러 주세요.",
+  };
+}
 
 function showError(err) {
   console.error(err);
-  setStatus("정보를 불러오지 못했어요");
+  const info = describeError(err);
+  setStatus(`오류: ${info.what}`);
   render(
     "오류",
-    el("h1", {}, "정보를 불러오지 못했어요"),
-    el("p", {}, "잠시 뒤 새로고침해 주세요.")
+    problemBox({
+      ...info,
+      kind: "error",
+      actions: [el("button", { type: "button", onclick: retry }, "다시 시도")],
+    })
   );
+  focusHeading();
+}
+
+// 다시 시도: sim=error 는 첫 시도만 실패시키므로, 두 번째부터는 정상으로 불러온다
+// 누른 버튼이 사라지므로 다시 불러온 화면의 제목으로 초점을 옮긴다
+async function retry() {
+  if (sim === "error") {
+    simErrorOn = false;
+    const params = new URLSearchParams(location.search);
+    params.delete("sim");
+    const rest = params.toString();
+    history.replaceState(null, "", rest ? `?${rest}` : "./");
+    sim = null;
+    updateSimBanner();
+  }
+  await route();
+  focusHeading();
+}
+
+// ---------- 재현 모드 안내 띠 ----------
+
+function updateSimBanner() {
+  if (!sim) {
+    simBanner.hidden = true;
+    simBanner.replaceChildren();
+    return;
+  }
+  const params = new URLSearchParams(location.search);
+  params.delete("sim");
+  const rest = params.toString();
+  simBanner.replaceChildren(
+    el("strong", {}, `재현 모드 (sim=${sim}) `),
+    SIM_MODES[sim],
+    " ",
+    el("a", { href: rest ? `?${rest}` : "./" }, "재현 모드 끄기")
+  );
+  simBanner.hidden = false;
 }
 
 // ---------- 바닥글 ----------
@@ -312,16 +591,60 @@ async function fillFooter() {
 
 async function route() {
   const params = new URLSearchParams(location.search);
+  const hasCompany = params.has("company");
+  const hasQuery = params.has("q");
   const company = (params.get("company") || "").trim();
-  const query = (params.get("q") || "").trim();
+  const rawQuery = params.get("q") || "";
+  clearFieldError();
+
+  // 검색어 검사: 주소로 열었을 때도 검색 칸 아래에 같은 안내를 보여 준다
+  let query = "";
+  if (hasQuery) {
+    const check = validateQuery(rawQuery);
+    input.value = rawQuery;
+    if (check.ok) {
+      query = check.value;
+      input.value = query;
+    } else if (!hasCompany) {
+      showFieldError(check);
+      setStatus(`입력을 확인해 주세요: ${check.what}`);
+      try {
+        await showHome();
+        setStatus(`입력을 확인해 주세요: ${check.what}`);
+      } catch (err) {
+        showError(err);
+      }
+      return;
+    }
+  }
+
+  if (hasCompany && !/^\d{6}$/.test(company)) {
+    invalidCompany(company);
+    return;
+  }
+
+  showLoading(hasCompany ? "회사 정보를 불러오는 중이에요…" : "회사 목록을 불러오는 중이에요…");
   try {
-    if (company) await showCompany(company, query);
-    else if (query) await showSearch(query);
+    if (sim === "slow") await wait(SLOW_MS);
+    if (simErrorOn) {
+      await wait(600);
+      const err = new Error("재현용 오류 (sim=error)");
+      err.simulated = true;
+      throw err;
+    }
+    if (hasCompany) await showCompany(company, query);
+    else if (hasQuery) await showSearch(query);
     else await showHome();
   } catch (err) {
     showError(err);
   }
 }
 
-fillFooter();
-route();
+(function start() {
+  const value = new URLSearchParams(location.search).get("sim");
+  sim = Object.hasOwn(SIM_MODES, value || "") ? value : null;
+  simErrorOn = sim === "error";
+  updateSimBanner();
+  fillFooter();
+  route();
+})();

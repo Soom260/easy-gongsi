@@ -18,6 +18,9 @@
   </header>
 
   <main class="wrap">
+    <!-- 주소에 sim= 이 있을 때만 보이는 재현 모드 안내 -->
+    <p id="sim-banner" class="sim-banner" hidden></p>
+
     <form id="search-form" class="search" role="search" action="./" method="get" novalidate>
       <label for="q">회사 이름 또는 종목코드</label>
       <div class="search-row">
@@ -25,7 +28,8 @@
         <button type="submit">찾기</button>
       </div>
       <p id="q-hint" class="hint">예: 삼성전자, 005930</p>
-      <p id="q-error" class="field-error" hidden></p>
+      <!-- 잘못된 입력 안내: 무슨 일 / 왜 / 할 일 -->
+      <div id="q-error" class="field-error" role="alert" hidden></div>
     </form>
 
     <!-- 불러오는 중 같은 상태 안내를 화면 읽기 프로그램이 읽어 줌 -->
