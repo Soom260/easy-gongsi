@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dart import Dart
-from sheets import BuildError, load_companies, load_dict
+from sheets import BuildError, compact, load_companies, load_dict
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE_DIR = ROOT / "site"
@@ -44,10 +44,6 @@ def read_limit():
     if not value.isdigit():
         raise BuildError(f"limit 값 '{value}' 는 0 이상의 숫자여야 해요.")
     return int(value)
-
-
-def compact(text):
-    return text.replace(" ", "")
 
 
 def match_dict(report_nm, dict_rows):
@@ -120,10 +116,10 @@ def build():
             else:
                 unmatched[title_type(report_nm)] += 1
             rcept_dt = d.get("rcept_dt", "")
+            # 제출인(flr_nm)은 임원 개인 이름일 수 있고 화면에 필요 없어서 담지 않는다
             items.append({
                 "title": report_nm,
                 "date": f"{rcept_dt[:4]}-{rcept_dt[4:6]}-{rcept_dt[6:8]}" if len(rcept_dt) == 8 else rcept_dt,
-                "filer": (d.get("flr_nm") or "").strip(),
                 "rcept_no": d.get("rcept_no", ""),
                 "url": DART_VIEWER + d.get("rcept_no", ""),
                 "explain": easy,

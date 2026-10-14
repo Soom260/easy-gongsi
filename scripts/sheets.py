@@ -22,6 +22,15 @@ TERMS_COLUMNS = ["용어", "쉬운설명", "읽는법", "공개"]
 COMPANY_COLUMNS = ["종목코드", "표시이름", "업종", "공개"]
 
 
+# DART 제목은 한글 자모 'ㆍ'를 쓰지만 시트에는 '·' 등을 적을 수 있어서 하나로 맞춘다
+MIDDLE_DOTS = str.maketrans({"ㆍ": "·", "・": "·", "•": "·", "‧": "·", "∙": "·"})
+
+
+def compact(text):
+    """매칭·중복 검사용: 공백을 지우고 가운뎃점을 통일한다."""
+    return text.replace(" ", "").translate(MIDDLE_DOTS)
+
+
 def fetch_text(source, tab_name):
     """게시 CSV 주소(또는 로컬 파일)에서 글자를 읽어 온다."""
     if not source:
@@ -120,7 +129,7 @@ def load_dict(source):
     rows = only_public(parse_csv(fetch_text(source, tab), tab, DICT_COLUMNS), tab)
     errors, seen = [], {}
     for r in rows:
-        key = r["공시유형"].replace(" ", "")
+        key = compact(r["공시유형"])
         if not key:
             errors.append(f"{r['_row']}행: 공시유형이 비어 있어요.")
         elif key in seen:
