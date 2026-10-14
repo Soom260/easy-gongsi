@@ -3,6 +3,11 @@ name: 빌드와 배포
 on:
   # Actions 탭에서 직접 실행
   workflow_dispatch:
+    inputs:
+      limit:
+        description: "테스트용: 다룰 회사 수 (0이면 전체)"
+        required: false
+        default: "0"
   # 매일 한국시간 08:17 (UTC 23:17). 예약 실행은 늦어지거나 빠질 수 있음
   schedule:
     - cron: "17 23 * * *"
@@ -26,6 +31,14 @@ jobs:
         with:
           python-version: "3.12"
       - name: 정적 파일 만들기
+        env:
+          # 비밀값(인증키)은 Secrets, 설정값(시트 게시 주소)은 Variables
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          SHEET_DICT_CSV_URL: ${{ vars.SHEET_DICT_CSV_URL }}
+          SHEET_TERMS_CSV_URL: ${{ vars.SHEET_TERMS_CSV_URL }}
+          SHEET_COMPANIES_CSV_URL: ${{ vars.SHEET_COMPANIES_CSV_URL }}
+          # 예약 실행 때는 입력이 없으므로 0(전체)
+          LIMIT: ${{ inputs.limit || '0' }}
         run: python scripts/build.py
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
