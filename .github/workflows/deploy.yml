@@ -1,0 +1,44 @@
+name: 빌드와 배포
+
+on:
+  # Actions 탭에서 직접 실행
+  workflow_dispatch:
+  # 매일 한국시간 08:17 (UTC 23:17). 예약 실행은 늦어지거나 빠질 수 있음
+  schedule:
+    - cron: "17 23 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 배포가 겹치지 않게 한 번에 하나만
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: 정적 파일 만들기
+        run: python scripts/build.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  # build가 실패하면 deploy는 실행되지 않음 → 이전 화면이 그대로 남음
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

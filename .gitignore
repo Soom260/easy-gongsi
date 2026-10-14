@@ -1,0 +1,9 @@
+# 비밀값: 절대 커밋하지 않음
+.env
+
+# 빌드 결과물: Actions가 매번 새로 만듦
+_site/
+
+# Python 임시 파일
+__pycache__/
+*.pyc

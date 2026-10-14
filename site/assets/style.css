@@ -1,0 +1,64 @@
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --text: #1f2328;
+  --muted: #59636e;
+  --line: #d8dee4;
+  --accent: #1a5fb4;
+  --focus: #e66100;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  line-height: 1.6;
+  /* 긴 한글·영문이 화면 밖으로 넘치지 않게 */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+a { color: var(--accent); }
+
+/* 키보드로 이동할 때 초점이 잘 보이게 */
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.wrap {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 16px;
+}
+
+.site-header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  padding: 20px 0 16px;
+}
+.site-header h1 { margin: 0; font-size: 1.4rem; }
+.site-header h1 a { color: inherit; text-decoration: none; }
+.tagline { margin: 4px 0 0; color: var(--muted); }
+
+main { padding: 24px 16px; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+}
+.card h2 { margin-top: 0; font-size: 1.15rem; }
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  padding: 20px 0 32px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.footer-list { margin: 0; padding-left: 1.2em; }
+.disclaimer { margin: 12px 0 0; font-weight: 600; }
